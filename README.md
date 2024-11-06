@@ -1,3 +1,8 @@
+# Environment Instructions
+To set up the Python environment and download the datasets, set up conda and run the following command:
+```bash
+./setup.sh
+```
 
 # Milestone 1
 * Replicate the original paper
