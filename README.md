@@ -48,14 +48,25 @@ When I say taking "model architecture optimization, ensemble methods, or cross-d
 
 
 # Idea for Next Steps
-* Train a model on CIFAR-10H to try predict human uncertainty
-* Apply this model to a chunk of CIFAR-10 data to create a new dataset with predicted human uncertainty
-* Train a model on the new dataset with predicted human uncertainty and compare the performance to the original model trained on CIFAR-10
+* JACK Train a model on CIFAR-10H to try predict human uncertainty
+* JACK Apply this model to a chunk of CIFAR-10 data to create a new dataset with predicted human uncertainty
+* JACK/ALEX Train a model on the new dataset with predicted human uncertainty and compare the performance to the original model trained on CIFAR-10
     * Augment the hard labels into a distribution of soft labels
-* Try to apply this idea to other datasets (e.g. CIFAR-100, ImageNet)
+* ALEX Try to apply this idea to other datasets (e.g. CIFAR-100, ImageNet)
+
+Previously: image / hard label -> classification (CIFAR10)
+Baseline: (image -> soft label) -> (image / soft label -> classification) (CIFAR10H) better than previous
+Now: ((image / hard label -> image / soft label) -> classification) 
 
 * We basically try to see if we can predict human uncertainty, because having a dataset with a distribution of uncertainty can make it more robust.
 
+* CONNOR Explore model architecture optimization, with diff CNN architectures
+
+* CONNOR ensemble learning with different architectures
+
+* sus... ALL transfer learning and fine tuning on CIFAR-10 data
+
+* ALEX qualitative analysis on when soft labels differ from ground truth
 
 Motivation: What problem are you tackling, and what's the setting you're considering?
 
