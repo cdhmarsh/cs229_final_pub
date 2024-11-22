@@ -45,3 +45,24 @@ To set up the Python environment and download the datasets, set up conda and run
 
 # Final Goal
 When I say taking "model architecture optimization, ensemble methods, or cross-dataset generalization" as the final goal of the project, I'm actually citing your last sentence of "Intended experiments". I think besides taking the CIFAR-10H dataset and training an existing model with that data, you can consider ways to improve the model architecture or try to ensemble different models/methods to increase the classification accuracy, or apply similar ideas to other datasets/applications. These are some ways to expand the scope of your project.
+
+
+# Idea for Next Steps
+* Train a model on CIFAR-10H to try predict human uncertainty
+* Apply this model to a chunk of CIFAR-10 data to create a new dataset with predicted human uncertainty
+* Train a model on the new dataset with predicted human uncertainty and compare the performance to the original model trained on CIFAR-10
+    * Augment the hard labels into a distribution of soft labels
+* Try to apply this idea to other datasets (e.g. CIFAR-100, ImageNet)
+
+* We basically try to see if we can predict human uncertainty, because having a dataset with a distribution of uncertainty can make it more robust.
+
+
+Motivation: What problem are you tackling, and what's the setting you're considering?
+
+Method: What machine learning techniques have you tried and why?
+
+Preliminary experiments: Describe the experiments that you've run, the outcomes, and any error analysis that you've done. You should have tried at least one baseline.
+
+* We know at this point that using soft labels, even if they do not exactly match the hard labels, can improve the performance and robustness of the model.
+
+Next steps: Given your preliminary results, what are the next steps that you're considering?
