@@ -74,20 +74,20 @@ class ImageHardLabelToSoftLabelModel(nn.Module):
             nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, padding=1),
             nn.ReLU(),
             # MaxPool1: (32, 32, 32) -> (32, 16, 16)
-            nn.MaxPool2d(2),
+            nn.MaxPool2d(kernel_size=2),
             # Conv2: (32, 16, 16) -> (64, 16, 16)
             nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1),
             nn.ReLU(),
             # MaxPool2: (64, 16, 16) -> (64, 8, 8)
-            nn.MaxPool2d(2),
+            nn.MaxPool2d(kernel_size=2),
         )
         # Fully connected layers
         self.fc_image = nn.Linear(64 * 8 * 8, 128)
         self.fc_label = nn.Linear(10, 128)  # To process hard label
         self.fc_output = nn.Sequential(
-            nn.Linear(256, 128),
+            nn.Linear(in_features=256, out_features=128),
             nn.ReLU(),
-            nn.Linear(128, 10),
+            nn.Linear(in_features=128, out_features=10),
             nn.Softmax(dim=1),  # Predict soft label as probability distribution
         )
 
@@ -126,14 +126,14 @@ def load_cifar10h():
 
 def train_model(model, train_loader, criterion, optimizer, epochs, device):
     # Track metrics
-    best_loss = float('inf')
+    best_loss = float("inf")
     train_losses = []
-    
+
     for epoch in range(epochs):
         model.train()
         epoch_loss = 0
         num_batches = 0
-        
+
         for images, hard_labels, soft_labels in train_loader:
             images, hard_labels, soft_labels = (
                 images.to(device),
@@ -151,13 +151,13 @@ def train_model(model, train_loader, criterion, optimizer, epochs, device):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+
             epoch_loss += loss.item()
             num_batches += 1
-        
+
         avg_epoch_loss = epoch_loss / num_batches
         train_losses.append(avg_epoch_loss)
-        
+
         # Save best model
         if avg_epoch_loss < best_loss:
             best_loss = avg_epoch_loss
@@ -170,9 +170,10 @@ def train_model(model, train_loader, criterion, optimizer, epochs, device):
 def evaluate_model(model, test_loader, device):
     model.eval()
     total_mse = 0
-    total_correct = 0
-    total_samples = 0
+    total_kl_div = 0
+    total_cross_entropy = 0
     num_batches = 0
+    
     with torch.no_grad():
         for images, hard_labels, target_soft_labels in test_loader:
             images = images.to(device)
@@ -182,29 +183,37 @@ def evaluate_model(model, test_loader, device):
             # Get model predictions
             predicted_soft_labels = model(images, hard_labels)
 
-            # Calculate MSE loss
+            # Calculate various metrics
             mse = F.mse_loss(predicted_soft_labels, target_soft_labels)
+            kl_div = F.kl_div(predicted_soft_labels.log(), target_soft_labels, reduction='batchmean')
+            cross_entropy = -torch.sum(target_soft_labels * torch.log(predicted_soft_labels + 1e-10)) / images.size(0)
+
             total_mse += mse.item()
+            total_kl_div += kl_div.item()
+            total_cross_entropy += cross_entropy.item()
             num_batches += 1
 
-            # Calculate accuracy against hard labels
-            predicted_classes = torch.argmax(predicted_soft_labels, dim=1)
-            hard_label_indices = torch.argmax(hard_labels, dim=1)
-
-            total_correct += (predicted_classes == hard_label_indices).sum().item()
-            total_samples += images.size(0)
-
+    # Calculate averages
     avg_mse = total_mse / num_batches
-    accuracy = 100 * total_correct / total_samples
+    avg_kl_div = total_kl_div / num_batches
+    avg_cross_entropy = total_cross_entropy / num_batches
+
     print(f"Average MSE Loss: {avg_mse:.4f}")
-    print(f"Accuracy: {accuracy:.2f}%")
-    return avg_mse, accuracy
+    print(f"Average KL Divergence: {avg_kl_div:.4f}")
+    print(f"Average Cross Entropy: {avg_cross_entropy:.4f}")
+    
+    return {
+        'mse': avg_mse,
+        'kl_div': avg_kl_div,
+        'cross_entropy': avg_cross_entropy
+    }
 
 
 class Config:
     batch_size = 128
     learning_rate = 0.001
-    epochs = 50
+    epochs = 30
+    folds = 5
     model_path = "models/soft_label_model.pt"
 
 
@@ -223,13 +232,14 @@ def main():
 
     if not args.eval:
         # Initialize K-fold cross validation
-        kfold = KFold(n_splits=10, shuffle=True, random_state=42)
+        kfold = KFold(n_splits=config.folds, shuffle=True, random_state=42)
         fold_splits = kfold.split(full_dataset)
         fold_results = []
 
         for fold, (train_ids, val_ids) in enumerate(fold_splits):
-            print(f'\nFold {fold + 1}/10')
-            
+            print(f"\nFold {fold + 1}/{config.folds}")
+            print(f"Train size: {len(train_ids)}, Val size: {len(val_ids)}, Full size: {len(full_dataset)}")
+
             # Initialize a new model for each fold
             model = ImageHardLabelToSoftLabelModel().to(device)
             optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
@@ -239,20 +249,12 @@ def main():
             train_subsampler = torch.utils.data.SubsetRandomSampler(train_ids)
             val_subsampler = torch.utils.data.SubsetRandomSampler(val_ids)
 
-            train_loader = DataLoader(
-                full_dataset, 
-                batch_size=config.batch_size, 
-                sampler=train_subsampler
-            )
-            val_loader = DataLoader(
-                full_dataset,
-                batch_size=config.batch_size, 
-                sampler=val_subsampler
-            )
+            train_loader = DataLoader(full_dataset, batch_size=config.batch_size, sampler=train_subsampler)
+            val_loader = DataLoader(full_dataset, batch_size=config.batch_size, sampler=val_subsampler)
 
             # Train the model
             train_model(model, train_loader, criterion, optimizer, config.epochs, device)
-            
+
             # Evaluate the model
             val_mse, val_acc = evaluate_model(model, val_loader, device)
             fold_results.append((val_mse, val_acc))
@@ -263,14 +265,14 @@ def main():
         # Print average results across folds
         avg_mse = sum(r[0] for r in fold_results) / len(fold_results)
         avg_acc = sum(r[1] for r in fold_results) / len(fold_results)
-        print(f'\nAverage across folds - MSE: {avg_mse:.4f}, Accuracy: {avg_acc:.2f}%')
+        print(f"\nAverage across folds - MSE: {avg_mse:.4f}, Accuracy: {avg_acc:.2f}%")
 
     else:
         # For evaluation mode, use the first fold's model
         model = ImageHardLabelToSoftLabelModel().to(device)
         model.load_state_dict(torch.load("models/model_fold_0.pt", weights_only=True))
         model.eval()
-        
+
         val_loader = DataLoader(full_dataset, batch_size=config.batch_size, shuffle=False)
         evaluate_model(model, val_loader, device)
 
