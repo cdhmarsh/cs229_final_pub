@@ -41,6 +41,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import datasets, transforms
 import os
 import argparse
+from sklearn.model_selection import KFold
 
 
 class CIFAR10SoftLabelDataset(Dataset):
@@ -118,37 +119,9 @@ def load_cifar10h():
         root="../data/cifar-10", train=False, download=True, transform=transforms.ToTensor()
     )
 
-    class CIFAR10H(Dataset):
-        def __init__(self, cifar10_dataset: Dataset, soft_labels: np.ndarray):
-            self.cifar10_dataset = cifar10_dataset
-            self.soft_labels = soft_labels
-
-        def __len__(self):
-            return len(self.cifar10_dataset)
-
-        def __getitem__(self, idx: int):
-            image, _ = self.cifar10_dataset[idx]
-            soft_label = torch.from_numpy(self.soft_labels[idx])
-            return image.float(), soft_label
-
-    # Calculate split sizes
-    total_size = len(cifar10_test)
-    train_size = int(0.9 * total_size)
-
-    # Create train/val datasets
-    train_indices = list(range(train_size))
-    val_indices = list(range(train_size, total_size))
-
-    train_cifar10_test = torch.utils.data.Subset(cifar10_test, train_indices)
-    val_cifar10_test = torch.utils.data.Subset(cifar10_test, val_indices)
-
-    train_soft_labels = cifar10h_probs[train_indices]
-    val_soft_labels = cifar10h_probs[val_indices]
-
-    train_dataset = CIFAR10H(train_cifar10_test, train_soft_labels)
-    val_dataset = CIFAR10H(val_cifar10_test, val_soft_labels)
-
-    return train_dataset, val_dataset
+    # Create full dataset
+    full_dataset = CIFAR10SoftLabelDataset(cifar10_test, cifar10h_probs)
+    return full_dataset
 
 
 def train_model(model, train_loader, criterion, optimizer, epochs, device):
@@ -189,8 +162,9 @@ def train_model(model, train_loader, criterion, optimizer, epochs, device):
         if avg_epoch_loss < best_loss:
             best_loss = avg_epoch_loss
             torch.save(model.state_dict(), "models/best_model.pt")
-            
-        print(f"Epoch {epoch + 1}/{epochs}, Avg Loss: {avg_epoch_loss:.4f}")
+
+        if (epoch + 1) % 5 == 0:
+            print(f"Epoch {epoch + 1}/{epochs}, Avg Loss: {avg_epoch_loss:.4f}")
 
 
 def evaluate_model(model, test_loader, device):
@@ -239,42 +213,66 @@ def main():
     parser.add_argument("--eval", action="store_true", help="Run evaluation only using saved model")
     args = parser.parse_args()
 
-    # Initialize model, optimizer, and dataset
     device = torch.device(
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
     print(f"Using device: {device}")
 
-    model = ImageHardLabelToSoftLabelModel().to(device)
-    train_dataset, val_dataset = load_cifar10h()
-
     config = Config()
+    full_dataset = load_cifar10h()
 
-    # Load saved model if in eval mode
-    if args.eval:
-        model.load_state_dict(torch.load(config.model_path, weights_only=True))
-        model.eval()
+    if not args.eval:
+        # Initialize K-fold cross validation
+        kfold = KFold(n_splits=10, shuffle=True, random_state=42)
+        fold_splits = kfold.split(full_dataset)
+        fold_results = []
+
+        for fold, (train_ids, val_ids) in enumerate(fold_splits):
+            print(f'\nFold {fold + 1}/10')
+            
+            # Initialize a new model for each fold
+            model = ImageHardLabelToSoftLabelModel().to(device)
+            optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
+            criterion = nn.KLDivLoss(reduction="batchmean")
+
+            # Create train/val datasets for this fold
+            train_subsampler = torch.utils.data.SubsetRandomSampler(train_ids)
+            val_subsampler = torch.utils.data.SubsetRandomSampler(val_ids)
+
+            train_loader = DataLoader(
+                full_dataset, 
+                batch_size=config.batch_size, 
+                sampler=train_subsampler
+            )
+            val_loader = DataLoader(
+                full_dataset,
+                batch_size=config.batch_size, 
+                sampler=val_subsampler
+            )
+
+            # Train the model
+            train_model(model, train_loader, criterion, optimizer, config.epochs, device)
+            
+            # Evaluate the model
+            val_mse, val_acc = evaluate_model(model, val_loader, device)
+            fold_results.append((val_mse, val_acc))
+
+            # Save fold model
+            torch.save(model.state_dict(), f"models/model_fold_{fold}.pt")
+
+        # Print average results across folds
+        avg_mse = sum(r[0] for r in fold_results) / len(fold_results)
+        avg_acc = sum(r[1] for r in fold_results) / len(fold_results)
+        print(f'\nAverage across folds - MSE: {avg_mse:.4f}, Accuracy: {avg_acc:.2f}%')
+
     else:
-        optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
-        criterion = nn.KLDivLoss(reduction="batchmean")  # KL Divergence for soft labels
-
-        # train_set, test_set = load_cifar10()
-
-        # Create training dataset (CIFAR-10 test set with CIFAR-10H soft labels)
-        train_dataset = CIFAR10SoftLabelDataset(train_dataset.cifar10_dataset, train_dataset.soft_labels)
-        train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
-
-        # Train the model
-        train_model(model, train_loader, criterion, optimizer, config.epochs, device)
-
-        # Save the trained model
-        torch.save(model.state_dict(), config.model_path)
-
-    val_dataset = CIFAR10SoftLabelDataset(val_dataset.cifar10_dataset, val_dataset.soft_labels)
-    val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
-
-    # Evaluate the model
-    evaluate_model(model, val_loader, device)
+        # For evaluation mode, use the first fold's model
+        model = ImageHardLabelToSoftLabelModel().to(device)
+        model.load_state_dict(torch.load("models/model_fold_0.pt", weights_only=True))
+        model.eval()
+        
+        val_loader = DataLoader(full_dataset, batch_size=config.batch_size, shuffle=False)
+        evaluate_model(model, val_loader, device)
 
 
 if __name__ == "__main__":
