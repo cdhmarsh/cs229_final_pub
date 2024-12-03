@@ -41,7 +41,6 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import datasets, transforms
 import os
 import argparse
-from sklearn.model_selection import KFold
 
 
 class CIFAR10SoftLabelDataset(Dataset):
@@ -212,8 +211,7 @@ def evaluate_model(model, test_loader, device):
 class Config:
     batch_size = 128
     learning_rate = 0.001
-    epochs = 30
-    folds = 5
+    epochs = 50
     model_path = "models/soft_label_model.pt"
 
 
@@ -230,51 +228,33 @@ def main():
     config = Config()
     full_dataset = load_cifar10h()
 
+    # Initialize model
+    model = ImageHardLabelToSoftLabelModel().to(device)
+
     if not args.eval:
-        # Initialize K-fold cross validation
-        kfold = KFold(n_splits=config.folds, shuffle=True, random_state=42)
-        fold_splits = kfold.split(full_dataset)
-        fold_results = []
+        # Train mode
+        optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
+        criterion = nn.KLDivLoss(reduction="batchmean")
 
-        for fold, (train_ids, val_ids) in enumerate(fold_splits):
-            print(f"\nFold {fold + 1}/{config.folds}")
-            print(f"Train size: {len(train_ids)}, Val size: {len(val_ids)}, Full size: {len(full_dataset)}")
+        # Create data loader
+        train_loader = DataLoader(full_dataset, batch_size=config.batch_size, shuffle=True)
 
-            # Initialize a new model for each fold
-            model = ImageHardLabelToSoftLabelModel().to(device)
-            optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
-            criterion = nn.KLDivLoss(reduction="batchmean")
+        # Train the model
+        train_model(model, train_loader, criterion, optimizer, config.epochs, device)
+        
+        # Create models directory if it doesn't exist
+        os.makedirs("models", exist_ok=True)
 
-            # Create train/val datasets for this fold
-            train_subsampler = torch.utils.data.SubsetRandomSampler(train_ids)
-            val_subsampler = torch.utils.data.SubsetRandomSampler(val_ids)
-
-            train_loader = DataLoader(full_dataset, batch_size=config.batch_size, sampler=train_subsampler)
-            val_loader = DataLoader(full_dataset, batch_size=config.batch_size, sampler=val_subsampler)
-
-            # Train the model
-            train_model(model, train_loader, criterion, optimizer, config.epochs, device)
-
-            # Evaluate the model
-            val_mse, val_acc = evaluate_model(model, val_loader, device)
-            fold_results.append((val_mse, val_acc))
-
-            # Save fold model
-            torch.save(model.state_dict(), f"models/model_fold_{fold}.pt")
-
-        # Print average results across folds
-        avg_mse = sum(r[0] for r in fold_results) / len(fold_results)
-        avg_acc = sum(r[1] for r in fold_results) / len(fold_results)
-        print(f"\nAverage across folds - MSE: {avg_mse:.4f}, Accuracy: {avg_acc:.2f}%")
-
+        # Save the model
+        torch.save(model.state_dict(), config.model_path)
     else:
-        # For evaluation mode, use the first fold's model
-        model = ImageHardLabelToSoftLabelModel().to(device)
-        model.load_state_dict(torch.load("models/model_fold_0.pt", weights_only=True))
+        # Load saved model
+        model.load_state_dict(torch.load(config.model_path, weights_only=True))
         model.eval()
 
-        val_loader = DataLoader(full_dataset, batch_size=config.batch_size, shuffle=False)
-        evaluate_model(model, val_loader, device)
+    # Evaluate model
+    val_loader = DataLoader(full_dataset, batch_size=config.batch_size, shuffle=False)
+    evaluate_model(model, val_loader, device)
 
 
 if __name__ == "__main__":
