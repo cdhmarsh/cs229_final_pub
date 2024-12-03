@@ -211,7 +211,7 @@ def evaluate_model(model, test_loader, device):
 class Config:
     batch_size = 128
     learning_rate = 0.001
-    epochs = 50
+    epochs = 100
     model_path = "models/soft_label_model.pt"
 
 
@@ -231,6 +231,9 @@ def main():
     # Initialize model
     model = ImageHardLabelToSoftLabelModel().to(device)
 
+    # Create models directory if it doesn't exist
+    os.makedirs("models", exist_ok=True)
+
     if not args.eval:
         # Train mode
         optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
@@ -241,9 +244,6 @@ def main():
 
         # Train the model
         train_model(model, train_loader, criterion, optimizer, config.epochs, device)
-        
-        # Create models directory if it doesn't exist
-        os.makedirs("models", exist_ok=True)
 
         # Save the model
         torch.save(model.state_dict(), config.model_path)
