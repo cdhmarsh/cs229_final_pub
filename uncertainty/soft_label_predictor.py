@@ -48,8 +48,8 @@ class Config:
 
     # Data parameters
     data_dir = Path("../data")
-    batch_size = 256
-    val_split = 0.2
+    batch_size = 128
+    val_split = 0.1
 
     # Model parameters
     hidden_dims = [128, 64]
@@ -59,7 +59,6 @@ class Config:
     learning_rate = 0.001
     weight_decay = 1e-4
     epochs = 50
-    early_stopping_patience = 10
 
     # Output paths
     model_dir = Path("models")
@@ -76,17 +75,28 @@ class CIFAR10SoftLabelDataset(Dataset):
     def __len__(self) -> int:
         return len(self.cifar10_dataset)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        _, hard_label = self.cifar10_dataset[idx]
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        image, hard_label = self.cifar10_dataset[idx]
         soft_label = self.soft_labels[idx]
-        return F.one_hot(torch.tensor(hard_label), num_classes=10).float(), soft_label
+        return image, F.one_hot(torch.tensor(hard_label), num_classes=10).float(), soft_label
 
 
-class HardToSoftLabelModel(nn.Module):
+class ImageHardToSoftLabelModel(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
+        self.image_encoder = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+        )
+        self.fc_image = nn.Linear(64 * 8 * 8, 128)
+        self.fc_label = nn.Linear(10, 128)
+
         layers = []
-        input_dim = 10
+        input_dim = 256
 
         for hidden_dim in config.hidden_dims:
             layers.extend(
@@ -101,10 +111,15 @@ class HardToSoftLabelModel(nn.Module):
 
         layers.extend([nn.Linear(input_dim, 10), nn.Softmax(dim=1)])
 
-        self.mapper = nn.Sequential(*layers)
+        self.fc_output = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.mapper(x)
+    def forward(self, image: torch.Tensor, hard_label: torch.Tensor) -> torch.Tensor:
+        image_features = self.image_encoder(image)
+        image_features = image_features.view(image_features.size(0), -1)
+        image_features = self.fc_image(image_features)
+        label_features = self.fc_label(hard_label)
+        combined_features = torch.cat([image_features, label_features], dim=1)
+        return self.fc_output(combined_features)
 
 
 def load_cifar10h(config: Config) -> Tuple[Dataset, Dataset]:
@@ -133,16 +148,19 @@ def train_model(
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
     best_val_loss = float("inf")
-    patience_counter = 0
 
     for epoch in range(config.epochs):
         # Training
         model.train()
         train_loss = 0
-        for hard_labels, soft_labels in train_loader:
-            hard_labels, soft_labels = hard_labels.to(device), soft_labels.to(device)
+        for images, hard_labels, soft_labels in train_loader:
+            images, hard_labels, soft_labels = (
+                images.to(device),
+                hard_labels.to(device),
+                soft_labels.to(device),
+            )
             optimizer.zero_grad()
-            predictions = model(hard_labels)
+            predictions = model(images, hard_labels)
             loss = criterion(predictions.log(), soft_labels)
             loss.backward()
             optimizer.step()
@@ -153,9 +171,13 @@ def train_model(
         model.eval()
         val_loss = 0
         with torch.no_grad():
-            for hard_labels, soft_labels in val_loader:
-                hard_labels, soft_labels = hard_labels.to(device), soft_labels.to(device)
-                predictions = model(hard_labels)
+            for images, hard_labels, soft_labels in val_loader:
+                images, hard_labels, soft_labels = (
+                    images.to(device),
+                    hard_labels.to(device),
+                    soft_labels.to(device),
+                )
+                predictions = model(images, hard_labels)
                 val_loss += criterion(predictions.log(), soft_labels).item()
         val_loss /= len(val_loader)
 
@@ -163,14 +185,6 @@ def train_model(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), config.model_path)
-            patience_counter = 0
-        else:
-            patience_counter += 1
-
-        # Early stopping
-        if patience_counter >= config.early_stopping_patience:
-            print(f"Early stopping at epoch {epoch}")
-            break
 
         if (epoch + 1) % 5 == 0:
             print(
@@ -185,35 +199,70 @@ def train_model(
 def generate_soft_labels(model: nn.Module, config: Config, device: torch.device):
     """Generate soft labels for the entire CIFAR-10 dataset."""
     # Load CIFAR-10 training and test sets
-    cifar10_train = datasets.CIFAR10(root=config.data_dir / "cifar-10", train=True, download=True)
-    cifar10_test = datasets.CIFAR10(root=config.data_dir / "cifar-10", train=False, download=True)
+    transform = transforms.ToTensor()
+    cifar10_train = datasets.CIFAR10(
+        root=config.data_dir / "cifar-10", train=True, download=True, transform=transform
+    )
+    cifar10_test = datasets.CIFAR10(
+        root=config.data_dir / "cifar-10", train=False, download=True, transform=transform
+    )
 
     model.eval()
     soft_labels = []
+    hard_labels = []
 
     with torch.no_grad():
         # Process training set
-        for _, label in cifar10_train:
-            hard_label = F.one_hot(torch.tensor(label), num_classes=10).float().to(device)
-            soft_label = model(hard_label.unsqueeze(0)).squeeze(0)
+        for image, label in cifar10_train:
+            image = image.unsqueeze(0).to(device)
+            hard_label = F.one_hot(torch.tensor(label), num_classes=10).float().unsqueeze(0).to(device)
+            soft_label = model(image, hard_label).squeeze(0)
             soft_labels.append(soft_label.cpu().numpy())
+            hard_labels.append(label)
 
         # Process test set
-        for _, label in cifar10_test:
-            hard_label = F.one_hot(torch.tensor(label), num_classes=10).float().to(device)
-            soft_label = model(hard_label.unsqueeze(0)).squeeze(0)
+        for image, label in cifar10_test:
+            image = image.unsqueeze(0).to(device)
+            hard_label = F.one_hot(torch.tensor(label), num_classes=10).float().unsqueeze(0).to(device)
+            soft_label = model(image, hard_label).squeeze(0)
             soft_labels.append(soft_label.cpu().numpy())
+            hard_labels.append(label)
+
+    # Convert to numpy arrays
+    soft_labels = np.array(soft_labels)
+    hard_labels = np.array(hard_labels)
+    
+    # Calculate statistics
+    soft_label_argmax = np.argmax(soft_labels, axis=1)
+    accuracy = np.mean(soft_label_argmax == hard_labels)
+    avg_confidence = np.mean(np.max(soft_labels, axis=1))
+    entropy = -np.sum(soft_labels * np.log(soft_labels + 1e-10), axis=1).mean()
+    
+    print("\nSoft Label Statistics:")
+    print(f"Accuracy (argmax matches hard label): {accuracy:.4f}")
+    print(f"Average confidence (max probability): {avg_confidence:.4f}")
+    print(f"Average entropy (uncertainty): {entropy:.4f}")
+    
+    # Per-class statistics
+    for i in range(10):
+        class_mask = hard_labels == i
+        class_accuracy = np.mean(soft_label_argmax[class_mask] == hard_labels[class_mask])
+        class_confidence = np.mean(np.max(soft_labels[class_mask], axis=1))
+        print(f"\nClass {i}:")
+        print(f"  Accuracy: {class_accuracy:.4f}")
+        print(f"  Average confidence: {class_confidence:.4f}")
 
     # Save soft labels
     config.output_dir.mkdir(exist_ok=True)
-    soft_labels = np.array(soft_labels)
     np.save(config.soft_labels_path, soft_labels)
-    print(f"Saved soft labels to {config.soft_labels_path}")
+    print(f"\nSaved soft labels to {config.soft_labels_path}")
 
 
 def main():
     config = Config()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    )
     print(f"Using device: {device}")
 
     # Create necessary directories
@@ -224,7 +273,7 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size)
 
-    model = HardToSoftLabelModel(config).to(device)
+    model = ImageHardToSoftLabelModel(config).to(device)
     model = train_model(model, train_loader, val_loader, config, device)
 
     # Generate soft labels for the entire dataset
