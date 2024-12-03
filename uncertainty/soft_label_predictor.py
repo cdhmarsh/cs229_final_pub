@@ -14,7 +14,8 @@ Step 1: Match CIFAR-10 Images to CIFAR-10H Labels
     
 Step 2: Model Architecture
 - Train a model to learn the mapping between CIFAR-10 hard labels and CIFAR-10H soft labels. The model could use:
-    - Input: CIFAR-10 hard label.
+    - Input: CIFAR-10 image.
+    - Auxiliary Input (Optional): CIFAR-10 hard label (as part of input or a separate embedding layer).
     - Output: Predicted soft label (a probability distribution over 10 classes).
     
 Step 3: Training
