@@ -41,7 +41,8 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import datasets, transforms
 import os
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Optional
+import argparse
 
 
 class Config:
@@ -123,7 +124,7 @@ class ImageHardToSoftLabelModel(nn.Module):
         return self.fc_output(combined_features)
 
 
-def load_cifar10h(config: Config) -> Tuple[Dataset, Dataset]:
+def load_cifar10h(config: Config, full_training: bool = False) -> Tuple[Dataset, Optional[Dataset]]:
     """Load and prepare CIFAR-10H dataset."""
     cifar10h_probs_path = config.data_dir / "cifar-10h/cifar10h-probs.npy"
     if not cifar10h_probs_path.exists():
@@ -135,6 +136,10 @@ def load_cifar10h(config: Config) -> Tuple[Dataset, Dataset]:
     )
 
     full_dataset = CIFAR10SoftLabelDataset(cifar10_test, cifar10h_probs)
+
+    if full_training:
+        return full_dataset, None
+
     train_size = int((1 - config.val_split) * len(full_dataset))
     val_size = len(full_dataset) - train_size
 
@@ -142,7 +147,11 @@ def load_cifar10h(config: Config) -> Tuple[Dataset, Dataset]:
 
 
 def train_model(
-    model: nn.Module, train_loader: DataLoader, val_loader: DataLoader, config: Config, device: torch.device
+    model: nn.Module,
+    train_loader: DataLoader,
+    val_loader: Optional[DataLoader],
+    config: Config,
+    device: torch.device,
 ) -> nn.Module:
     """Train the model and return the best version."""
     criterion = nn.KLDivLoss(reduction="batchmean")
@@ -169,31 +178,38 @@ def train_model(
         train_loss /= len(train_loader)
 
         # Validation
-        model.eval()
-        val_loss = 0
-        with torch.no_grad():
-            for images, hard_labels, soft_labels in val_loader:
-                images, hard_labels, soft_labels = (
-                    images.to(device),
-                    hard_labels.to(device),
-                    soft_labels.to(device),
+        if val_loader is not None:
+            model.eval()
+            val_loss = 0
+            with torch.no_grad():
+                for images, hard_labels, soft_labels in val_loader:
+                    images, hard_labels, soft_labels = (
+                        images.to(device),
+                        hard_labels.to(device),
+                        soft_labels.to(device),
+                    )
+                    predictions = model(images, hard_labels)
+                    val_loss += criterion(predictions.log(), soft_labels).item()
+            val_loss /= len(val_loader)
+
+            # Save best model
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                torch.save(model.state_dict(), config.model_path)
+
+            if (epoch + 1) % 5 == 0:
+                print(
+                    f"Epoch {epoch + 1}/{config.epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}"
                 )
-                predictions = model(images, hard_labels)
-                val_loss += criterion(predictions.log(), soft_labels).item()
-        val_loss /= len(val_loader)
+        else:
+            # Save model at regular intervals when training on full dataset
+            if (epoch + 1) % 5 == 0:
+                torch.save(model.state_dict(), config.model_path)
+                print(f"Epoch {epoch + 1}/{config.epochs}, Train Loss: {train_loss:.4f}")
 
-        # Save best model
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            torch.save(model.state_dict(), config.model_path)
-
-        if (epoch + 1) % 5 == 0:
-            print(
-                f"Epoch {epoch + 1}/{config.epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}"
-            )
-
-    # Load best model
-    model.load_state_dict(torch.load(config.model_path, weights_only=True))
+    # Load best model if using validation, otherwise use final model
+    if val_loader is not None:
+        model.load_state_dict(torch.load(config.model_path, weights_only=True))
     return model
 
 
@@ -232,18 +248,18 @@ def generate_soft_labels(model: nn.Module, config: Config, device: torch.device)
     # Convert to numpy arrays
     soft_labels = np.array(soft_labels)
     hard_labels = np.array(hard_labels)
-    
+
     # Calculate statistics
     soft_label_argmax = np.argmax(soft_labels, axis=1)
     accuracy = np.mean(soft_label_argmax == hard_labels)
     avg_confidence = np.mean(np.max(soft_labels, axis=1))
     entropy = -np.sum(soft_labels * np.log(soft_labels + 1e-10), axis=1).mean()
-    
+
     print("\nSoft Label Statistics:")
     print(f"Accuracy (argmax matches hard label): {accuracy:.4f}")
     print(f"Average confidence (max probability): {avg_confidence:.4f}")
     print(f"Average entropy (uncertainty): {entropy:.4f}")
-    
+
     # Per-class statistics
     for i in range(10):
         class_mask = hard_labels == i
@@ -260,6 +276,10 @@ def generate_soft_labels(model: nn.Module, config: Config, device: torch.device)
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--full", action="store_true", help="Train on full dataset without validation split")
+    args = parser.parse_args()
+
     config = Config()
     device = torch.device(
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -270,9 +290,14 @@ def main():
     config.model_dir.mkdir(exist_ok=True)
 
     # Train model
-    train_dataset, val_dataset = load_cifar10h(config)
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config.batch_size)
+    if args.full:
+        train_dataset, _ = load_cifar10h(config, full_training=True)
+        train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
+        val_loader = None
+    else:
+        train_dataset, val_dataset = load_cifar10h(config)
+        train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=config.batch_size)
 
     model = ImageHardToSoftLabelModel(config).to(device)
     model = train_model(model, train_loader, val_loader, config, device)
