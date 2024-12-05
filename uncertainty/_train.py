@@ -1,4 +1,6 @@
 """
+IGNORE THIS -> THIS IS THE SAME AS THE UPDATED_TRAIN NOTEBOOK
+
 This file contains the code to run experiments with artificial soft labels.
 
 The experiment is:
