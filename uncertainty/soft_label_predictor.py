@@ -64,8 +64,6 @@ class Config:
     output_dir = Path("outputs")
     soft_labels_path = output_dir / "cifar10_soft_labels.npy"
 
-    gamma = 0.7
-
 
 class CIFAR10SoftLabelDataset(Dataset):
     def __init__(self, cifar10_dataset: Dataset, soft_labels: np.ndarray):
@@ -84,95 +82,52 @@ class CIFAR10SoftLabelDataset(Dataset):
 class ImageHardToSoftLabelModel(nn.Module):
     def __init__(self):
         super().__init__()
-        # Improved image encoder using ResNet-like blocks
         self.image_encoder = nn.Sequential(
-            # Initial conv layer
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
+            # Conv1: (3, 32, 32) -> (32, 32, 32)
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, padding=1),
             nn.ReLU(),
-            # ResNet-like blocks
-            self._make_residual_block(64, 128),
-            self._make_residual_block(128, 256),
-            self._make_residual_block(256, 512),
-            # Global average pooling
-            nn.AdaptiveAvgPool2d((1, 1)),
-        )
-
-        # Uncertainty-aware label processing
-        self.label_encoder = nn.Sequential(
-            nn.Linear(10, 256), nn.ReLU(), nn.Dropout(0.3), nn.Linear(256, 512)
-        )
-
-        # Improved decoder with attention mechanism
-        self.attention = nn.MultiheadAttention(embed_dim=512, num_heads=8)
-
-        self.decoder = nn.Sequential(
-            nn.Linear(1024, 512),
+            # MaxPool1: (32, 32, 32) -> (32, 16, 16)
+            nn.MaxPool2d(kernel_size=2),
+            # Conv2: (32, 16, 16) -> (64, 16, 16)
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.BatchNorm1d(512),
-            nn.Dropout(0.3),
-            nn.Linear(512, 256),
+            # MaxPool2: (64, 16, 16) -> (64, 8, 8)
+            nn.MaxPool2d(kernel_size=2),
+        )
+        # Fully connected layers
+        self.fc_image = nn.Linear(64 * 8 * 8, 128)
+        self.fc_label = nn.Linear(10, 128)  # To process hard label
+
+        self.fc_output = nn.Sequential(
+            # First hidden layer: 256 -> 128
+            nn.Linear(in_features=256, out_features=128),
             nn.ReLU(),
-            nn.BatchNorm1d(256),
-            nn.Dropout(0.3),
-            nn.Linear(256, 10),
-            # Temperature-scaled softmax for better uncertainty calibration
-            TemperatureSoftmax(temperature=1.5),
+            nn.BatchNorm1d(num_features=128),
+            nn.Dropout(p=0.2),
+            # Second hidden layer: 128 -> 64
+            nn.Linear(in_features=128, out_features=64),
+            nn.ReLU(),
+            nn.BatchNorm1d(num_features=64),
+            nn.Dropout(p=0.2),
+            # Output layer: 64 -> 10 with softmax
+            nn.Linear(in_features=64, out_features=10),
+            nn.Softmax(dim=1),  # predict soft label as probability distribution
         )
 
-    def _make_residual_block(self, in_channels, out_channels):
-        return nn.Sequential(ResidualBlock(in_channels, out_channels), nn.MaxPool2d(2))
+    def forward(self, image: torch.Tensor, hard_label: torch.Tensor) -> torch.Tensor:
+        # Encode the image
+        image_features = self.image_encoder(image)
+        image_features = image_features.view(image_features.size(0), -1)
+        image_features = self.fc_image(image_features)
 
-    def forward(self, image, hard_label):
-        # Extract image features
-        img_features = self.image_encoder(image)
-        img_features = img_features.squeeze(-1).squeeze(-1)
+        # Process the hard label
+        label_features = self.fc_label(hard_label)
 
-        # Process label features
-        label_features = self.label_encoder(hard_label)
+        # Concatenate the image and hard label features
+        combined_features = torch.cat([image_features, label_features], dim=1)
 
-        # Apply self-attention to capture feature relationships
-        img_features = img_features.unsqueeze(0)
-        attn_output, _ = self.attention(img_features, img_features, img_features)
-        img_features = attn_output.squeeze(0)
-
-        # Combine features
-        combined = torch.cat([img_features, label_features], dim=1)
-
-        return self.decoder(combined)
-
-
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-
-        self.shortcut = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=1), nn.BatchNorm2d(out_channels)
-        )
-
-    def forward(self, x):
-        residual = x
-
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-
-        out += self.shortcut(residual)
-        out = F.relu(out)
-
-        return out
-
-
-class TemperatureSoftmax(nn.Module):
-    def __init__(self, temperature=1.0):
-        super().__init__()
-        self.temperature = temperature
-
-    def forward(self, x):
-        return F.softmax(x / self.temperature, dim=1)
+        # Process the combined features to predict soft label
+        return self.fc_output(combined_features)
 
 
 def load_cifar10h(config: Config, full_training: bool = False) -> Tuple[Dataset, Optional[Dataset]]:
@@ -205,11 +160,8 @@ def train_model(
     device: torch.device,
 ) -> nn.Module:
     """Train the model and return the best version."""
-    kl_criterion = nn.KLDivLoss(reduction="batchmean")
-    mse_criterion = nn.MSELoss()
-
-    optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
+    criterion = nn.KLDivLoss(reduction="batchmean")
+    optimizer = optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
     best_val_loss = float("inf")
 
@@ -225,10 +177,7 @@ def train_model(
             )
             optimizer.zero_grad()
             predictions = model(images, hard_labels)
-            loss = (
-                config.gamma * kl_criterion(predictions.log(), soft_labels)
-                + (1 - config.gamma) * mse_criterion(predictions, soft_labels)
-            )
+            loss = criterion(predictions.log(), soft_labels)
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
@@ -246,7 +195,7 @@ def train_model(
                         soft_labels.to(device),
                     )
                     predictions = model(images, hard_labels)
-                    val_loss += loss.item()
+                    val_loss += criterion(predictions.log(), soft_labels).item()
             val_loss /= len(val_loader)
 
             # Save best model
@@ -263,8 +212,6 @@ def train_model(
             if (epoch + 1) % 5 == 0:
                 torch.save(model.state_dict(), config.model_path)
                 print(f"Epoch {epoch + 1}/{config.epochs}, Train Loss: {train_loss:.4f}")
-
-        scheduler.step()
 
     # Load best model if using validation, otherwise use final model
     if val_loader is not None:
@@ -366,89 +313,8 @@ def main():
     print("\nGenerating soft labels for the entire dataset")
 
     # Generate soft labels for the entire dataset
-    generate_soft_labels(model, config, device)
+    # generate_soft_labels(model, config, device)
 
 
 if __name__ == "__main__":
     main()
-    
-    
-"""
-Training Output:
-
-❯ python soft_label_predictor.py
-Using device: mps
-Files already downloaded and verified
-Training on 9000 samples and validating on 1000 samples
-Epoch 5/100, Train Loss: 0.0775, Val Loss: 0.0689
-Epoch 10/100, Train Loss: 0.0711, Val Loss: 0.0946
-Epoch 15/100, Train Loss: 0.0762, Val Loss: 0.0951
-Epoch 20/100, Train Loss: 0.0656, Val Loss: 0.0591
-Epoch 25/100, Train Loss: 0.0468, Val Loss: 0.0406
-Epoch 30/100, Train Loss: 0.0372, Val Loss: 0.0378
-Epoch 35/100, Train Loss: 0.0574, Val Loss: 0.0491
-Epoch 40/100, Train Loss: 0.0421, Val Loss: 0.0647
-Epoch 45/100, Train Loss: 0.0346, Val Loss: 0.0336
-Epoch 50/100, Train Loss: 0.0294, Val Loss: 0.0286
-Epoch 55/100, Train Loss: 0.0248, Val Loss: 0.0343
-Epoch 60/100, Train Loss: 0.0206, Val Loss: 0.0194
-Epoch 65/100, Train Loss: 0.0173, Val Loss: 0.0226
-Epoch 70/100, Train Loss: 0.0167, Val Loss: 0.0243
-Epoch 75/100, Train Loss: 0.0366, Val Loss: 0.0399
-Epoch 80/100, Train Loss: 0.0300, Val Loss: 0.0600
-Epoch 85/100, Train Loss: 0.0255, Val Loss: 0.0369
-Epoch 90/100, Train Loss: 0.0228, Val Loss: 0.0231
-Epoch 95/100, Train Loss: 0.0200, Val Loss: 0.0232
-Epoch 100/100, Train Loss: 0.0240, Val Loss: 0.0404
-
-Generating soft labels for the entire dataset
-Files already downloaded and verified
-Files already downloaded and verified
-
-Soft Label Statistics:
-Accuracy (argmax matches hard label): 0.9988
-Average confidence (max probability): 0.9765
-Average entropy (uncertainty): 0.1195
-
-Class 0:
-  Accuracy: 0.9998
-  Average confidence: 0.9721
-
-Class 1:
-  Accuracy: 0.9993
-  Average confidence: 0.9871
-
-Class 2:
-  Accuracy: 0.9988
-  Average confidence: 0.9774
-
-Class 3:
-  Accuracy: 0.9968
-  Average confidence: 0.9583
-
-Class 4:
-  Accuracy: 0.9955
-  Average confidence: 0.9506
-
-Class 5:
-  Accuracy: 0.9993
-  Average confidence: 0.9771
-
-Class 6:
-  Accuracy: 0.9997
-  Average confidence: 0.9803
-
-Class 7:
-  Accuracy: 0.9997
-  Average confidence: 0.9915
-
-Class 8:
-  Accuracy: 0.9995
-  Average confidence: 0.9864
-
-Class 9:
-  Accuracy: 0.9995
-  Average confidence: 0.9844
-
-Saved soft labels to outputs/cifar10_soft_labels.npy
-"""
