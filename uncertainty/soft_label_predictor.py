@@ -385,70 +385,70 @@ Epoch 10/100, Train Loss: 0.0711, Val Loss: 0.0946
 Epoch 15/100, Train Loss: 0.0762, Val Loss: 0.0951
 Epoch 20/100, Train Loss: 0.0656, Val Loss: 0.0591
 Epoch 25/100, Train Loss: 0.0468, Val Loss: 0.0406
-Epoch 30/100, Train Loss: 0.0359, Val Loss: 0.0286
-Epoch 35/100, Train Loss: 0.0539, Val Loss: 0.0464
-Epoch 40/100, Train Loss: 0.0410, Val Loss: 0.0508
-Epoch 45/100, Train Loss: 0.0334, Val Loss: 0.0378
-Epoch 50/100, Train Loss: 0.0276, Val Loss: 0.0206
-Epoch 55/100, Train Loss: 0.0241, Val Loss: 0.0311
-Epoch 60/100, Train Loss: 0.0189, Val Loss: 0.0161
-Epoch 65/100, Train Loss: 0.0163, Val Loss: 0.0108
-Epoch 70/100, Train Loss: 0.0149, Val Loss: 0.0158
-Epoch 75/100, Train Loss: 0.0341, Val Loss: 0.0363
-Epoch 80/100, Train Loss: 0.0278, Val Loss: 0.0210
-Epoch 85/100, Train Loss: 0.0240, Val Loss: 0.0479
-Epoch 90/100, Train Loss: 0.0212, Val Loss: 0.0244
-Epoch 95/100, Train Loss: 0.0193, Val Loss: 0.0201
-Epoch 100/100, Train Loss: 0.0169, Val Loss: 0.0116
+Epoch 30/100, Train Loss: 0.0372, Val Loss: 0.0378
+Epoch 35/100, Train Loss: 0.0574, Val Loss: 0.0491
+Epoch 40/100, Train Loss: 0.0421, Val Loss: 0.0647
+Epoch 45/100, Train Loss: 0.0346, Val Loss: 0.0336
+Epoch 50/100, Train Loss: 0.0294, Val Loss: 0.0286
+Epoch 55/100, Train Loss: 0.0248, Val Loss: 0.0343
+Epoch 60/100, Train Loss: 0.0206, Val Loss: 0.0194
+Epoch 65/100, Train Loss: 0.0173, Val Loss: 0.0226
+Epoch 70/100, Train Loss: 0.0167, Val Loss: 0.0243
+Epoch 75/100, Train Loss: 0.0366, Val Loss: 0.0399
+Epoch 80/100, Train Loss: 0.0300, Val Loss: 0.0600
+Epoch 85/100, Train Loss: 0.0255, Val Loss: 0.0369
+Epoch 90/100, Train Loss: 0.0228, Val Loss: 0.0231
+Epoch 95/100, Train Loss: 0.0200, Val Loss: 0.0232
+Epoch 100/100, Train Loss: 0.0240, Val Loss: 0.0404
 
 Generating soft labels for the entire dataset
 Files already downloaded and verified
 Files already downloaded and verified
 
 Soft Label Statistics:
-Accuracy (argmax matches hard label): 0.9989
-Average confidence (max probability): 0.9770
-Average entropy (uncertainty): 0.1171
+Accuracy (argmax matches hard label): 0.9988
+Average confidence (max probability): 0.9765
+Average entropy (uncertainty): 0.1195
 
 Class 0:
   Accuracy: 0.9998
-  Average confidence: 0.9754
+  Average confidence: 0.9721
 
 Class 1:
   Accuracy: 0.9993
-  Average confidence: 0.9897
+  Average confidence: 0.9871
 
 Class 2:
-  Accuracy: 0.9990
-  Average confidence: 0.9752
+  Accuracy: 0.9988
+  Average confidence: 0.9774
 
 Class 3:
-  Accuracy: 0.9978
-  Average confidence: 0.9562
+  Accuracy: 0.9968
+  Average confidence: 0.9583
 
 Class 4:
-  Accuracy: 0.9972
-  Average confidence: 0.9574
+  Accuracy: 0.9955
+  Average confidence: 0.9506
 
 Class 5:
-  Accuracy: 0.9985
-  Average confidence: 0.9785
+  Accuracy: 0.9993
+  Average confidence: 0.9771
 
 Class 6:
-  Accuracy: 1.0000
-  Average confidence: 0.9800
+  Accuracy: 0.9997
+  Average confidence: 0.9803
 
 Class 7:
   Accuracy: 0.9997
-  Average confidence: 0.9905
+  Average confidence: 0.9915
 
 Class 8:
   Accuracy: 0.9995
-  Average confidence: 0.9848
+  Average confidence: 0.9864
 
 Class 9:
-  Accuracy: 0.9985
-  Average confidence: 0.9825
+  Accuracy: 0.9995
+  Average confidence: 0.9844
 
 Saved soft labels to outputs/cifar10_soft_labels.npy
 """
