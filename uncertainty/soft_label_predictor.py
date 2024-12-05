@@ -53,14 +53,10 @@ class Config:
     batch_size = 128
     val_split = 0.1
 
-    # Model parameters
-    hidden_dims = [128, 64]
-    dropout_rate = 0.2
-
     # Training parameters
     learning_rate = 0.001
     weight_decay = 1e-4
-    epochs = 50
+    epochs = 100
 
     # Output paths
     model_dir = Path("models")
@@ -84,43 +80,53 @@ class CIFAR10SoftLabelDataset(Dataset):
 
 
 class ImageHardToSoftLabelModel(nn.Module):
-    def __init__(self, config: Config):
+    def __init__(self):
         super().__init__()
         self.image_encoder = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            # Conv1: (3, 32, 32) -> (32, 32, 32)
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            # MaxPool1: (32, 32, 32) -> (32, 16, 16)
+            nn.MaxPool2d(kernel_size=2),
+            # Conv2: (32, 16, 16) -> (64, 16, 16)
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(2),
+            # MaxPool2: (64, 16, 16) -> (64, 8, 8)
+            nn.MaxPool2d(kernel_size=2),
         )
+        # Fully connected layers
         self.fc_image = nn.Linear(64 * 8 * 8, 128)
-        self.fc_label = nn.Linear(10, 128)
+        self.fc_label = nn.Linear(10, 128)  # To process hard label
 
-        layers = []
-        input_dim = 256
-
-        for hidden_dim in config.hidden_dims:
-            layers.extend(
-                [
-                    nn.Linear(input_dim, hidden_dim),
-                    nn.ReLU(),
-                    nn.BatchNorm1d(hidden_dim),
-                    nn.Dropout(config.dropout_rate),
-                ]
-            )
-            input_dim = hidden_dim
-
-        layers.extend([nn.Linear(input_dim, 10), nn.Softmax(dim=1)])
-
-        self.fc_output = nn.Sequential(*layers)
+        self.fc_output = nn.Sequential(
+            # First hidden layer: 256 -> 128
+            nn.Linear(in_features=256, out_features=128),
+            nn.ReLU(),
+            nn.BatchNorm1d(num_features=128),
+            nn.Dropout(p=0.2),
+            # Second hidden layer: 128 -> 64
+            nn.Linear(in_features=128, out_features=64),
+            nn.ReLU(),
+            nn.BatchNorm1d(num_features=64),
+            nn.Dropout(p=0.2),
+            # Output layer: 64 -> 10 with softmax
+            nn.Linear(in_features=64, out_features=10),
+            nn.Softmax(dim=1),  # predict soft label as probability distribution
+        )
 
     def forward(self, image: torch.Tensor, hard_label: torch.Tensor) -> torch.Tensor:
+        # Encode the image
         image_features = self.image_encoder(image)
         image_features = image_features.view(image_features.size(0), -1)
         image_features = self.fc_image(image_features)
+
+        # Process the hard label
         label_features = self.fc_label(hard_label)
+
+        # Concatenate the image and hard label features
         combined_features = torch.cat([image_features, label_features], dim=1)
+
+        # Process the combined features to predict soft label
         return self.fc_output(combined_features)
 
 
@@ -294,16 +300,20 @@ def main():
         train_dataset, _ = load_cifar10h(config, full_training=True)
         train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
         val_loader = None
+        print(f"Training on full dataset with {len(train_dataset)} samples")
     else:
         train_dataset, val_dataset = load_cifar10h(config)
         train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=config.batch_size)
+        print(f"Training on {len(train_dataset)} samples and validating on {len(val_dataset)} samples")
 
-    model = ImageHardToSoftLabelModel(config).to(device)
+    model = ImageHardToSoftLabelModel().to(device)
     model = train_model(model, train_loader, val_loader, config, device)
 
+    print("\nGenerating soft labels for the entire dataset")
+
     # Generate soft labels for the entire dataset
-    generate_soft_labels(model, config, device)
+    # generate_soft_labels(model, config, device)
 
 
 if __name__ == "__main__":

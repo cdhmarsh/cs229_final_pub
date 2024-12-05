@@ -8,7 +8,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import datasets, transforms
 import os
-from soft_label_predictor import CIFAR10SoftLabelDataset, ImageHardLabelToSoftLabelModel
+from soft_label_predictor import ImageHardToSoftLabelModel
 
 class HardToSoftLabelDataset(Dataset):
     def __init__(self, model, dataloader, device):
@@ -39,6 +39,10 @@ class HardToSoftLabelDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.images[idx], self.soft_labels[idx]
+    
+def create_soft_label_dataset(model, hard_label_dataloader, device):
+    soft_label_dataset = HardToSoftLabelDataset(model, hard_label_dataloader, device)
+    return soft_label_dataset
 
 
 def create_soft_label_dataloader(model, hard_label_dataloader, batch_size, device):
@@ -50,7 +54,7 @@ def create_soft_label_dataloader(model, hard_label_dataloader, batch_size, devic
     :param device: Device to run predictions on.
     :return: DataLoader with images and predicted soft labels.
     """
-    soft_label_dataset = HardToSoftLabelDataset(model, hard_label_dataloader, device)
+    soft_label_dataset = create_soft_label_dataset(model, hard_label_dataloader, device)
     return DataLoader(soft_label_dataset, batch_size=batch_size, shuffle=True)
 
 def main():
@@ -60,8 +64,8 @@ def main():
     print(f"Using device: {device}")
 
     # Load the trained model
-    model = ImageHardLabelToSoftLabelModel().to(device)
-    model.load_state_dict(torch.load("models/best_model.pt"))
+    model = ImageHardToSoftLabelModel().to(device)
+    model.load_state_dict(torch.load("models/soft_label_model.pt"))
     model.eval()
 
     # Load CIFAR-10 dataset and return train, validation, and test DataLoaders
