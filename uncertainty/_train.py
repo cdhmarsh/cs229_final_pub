@@ -1,6 +1,4 @@
 """
-IGNORE THIS -> THIS IS THE SAME AS THE UPDATED_TRAIN NOTEBOOK
-
 This file contains the code to run experiments with artificial soft labels.
 
 The experiment is:
@@ -68,7 +66,7 @@ def plot_confusion_matrix(y_true, y_pred, classes):
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
     plt.show()
-
+    
 def save_metrics(metrics: Dict, model_name: str):
     """Save metrics dictionary to JSON file."""
     metrics_path = f"metrics/{model_name}_metrics.json"
@@ -179,14 +177,23 @@ def evaluate_metrics(model, test_loader, device, classes=CIFAR10_CLASSES):
     # Calculate additional metrics
     additional_metrics = compute_additional_metrics(all_preds, all_labels, all_probs)
     
+    report = classification_report(all_labels, all_preds, 
+                                                    target_names=classes if classes else None,
+                                                    output_dict=True)
+    
+    # Print summary of metrics
+    print(f"\nTest Loss: {avg_loss:.4f}")
+    print(f"Test Accuracy: {accuracy:.2f}%") 
+    print(f"Macro AUPRC: {additional_metrics['macro_auprc']:.4f}")
+    print(report)
+
+    
     # Combine all metrics
     metrics = {
         'test_loss': avg_loss,
         'test_accuracy': accuracy,
         **additional_metrics,
-        'classification_report': classification_report(all_labels, all_preds, 
-                                                    target_names=classes if classes else None,
-                                                    output_dict=True)
+        'classification_report': report
     }
     
     return metrics
@@ -299,6 +306,24 @@ def train_model(
     
     return model, metrics
 
+
+class CIFAR10LabelDataset(Dataset):
+    def __init__(self, dataset, soft_labels=None):
+        self.dataset = dataset
+        self.soft_labels = soft_labels
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        image, label = self.dataset[idx]
+        if self.soft_labels is None:
+            # Convert hard labels to one-hot
+            label = F.one_hot(torch.tensor(label), num_classes=10).float()
+        else:
+            label = torch.tensor(self.soft_labels[idx])
+        return image, label
+    
 # Load CIFAR-10 dataset and return train, validation, and test DataLoaders
 def load_cifar10_experiment():
     transform = transforms.Compose([
@@ -321,25 +346,13 @@ def load_cifar10_experiment():
 
     return augment_dataset, train_dataset, test_dataset, val_dataset
 
-class CIFAR10LabelDataset(Dataset):
-    def __init__(self, dataset, soft_labels=None):
-        self.dataset = dataset
-        self.soft_labels = soft_labels
 
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, idx):
-        image, label = self.dataset[idx]
-        if self.soft_labels is None:
-            # Convert hard labels to one-hot
-            label = F.one_hot(torch.tensor(label), num_classes=10).float()
-        else:
-            label = torch.tensor(self.soft_labels[idx])
-        return image, label
-
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device(
+    "cuda" if torch.cuda.is_available() 
+    else "mps" if torch.backends.mps.is_available() 
+    else "cpu"
+)
+print(f"Using device: {device}")
 
 # Load datasets
 augment_dataset, train_dataset, test_dataset, val_dataset = load_cifar10_experiment()
@@ -354,7 +367,11 @@ augment_loader = DataLoader(augment_dataset, batch_size=batch_size, shuffle=Fals
 # Load CIFAR-10H soft labels
 cifar10h_probs = np.load("../data/cifar-10h/cifar10h-probs.npy").astype(np.float32)
 
+print(f"CIFAR-10 dataset loaded with {len(augment_dataset)} augment samples, {len(train_dataset)} training samples, {len(test_dataset)} testing samples, and {len(val_dataset)} validation samples")
+print(f"CIFAR-10H soft labels loaded with shape {cifar10h_probs.shape}")
+
 all_metrics = {}
+
 
 print("\n=== Running Main Experiment ===")
 print("Training with artificial soft labels + CIFAR-10H")
@@ -371,6 +388,10 @@ cifar10h_soft_dataset = CIFAR10LabelDataset(train_dataset, cifar10h_probs)
 # Combine datasets and create loader
 combined_soft_dataset = ConcatDataset([augmented_soft_dataset, cifar10h_soft_dataset])
 combined_soft_loader = DataLoader(combined_soft_dataset, batch_size=batch_size, shuffle=True)
+
+print(f"Combined soft dataset size: {len(combined_soft_dataset)} samples")
+print(f"- Augmented soft labels: {len(augmented_soft_dataset)} samples")
+print(f"- CIFAR-10H soft labels: {len(cifar10h_soft_dataset)} samples")
 
 # Train model
 model = models.resnet34(weights=models.ResNet34_Weights.DEFAULT)
@@ -394,12 +415,17 @@ all_metrics['artificial_soft'] = {
 }
 save_metrics(all_metrics['artificial_soft'], 'artificial_soft')
 
+
 print("\n=== Running Baseline 1 ===")
 print("Training with CIFAR-10 hard labels + CIFAR-10H hard labels")
 
 # Create combined hard label dataset
 combined_hard_dataset = ConcatDataset([augment_dataset, train_dataset])
 combined_hard_loader = DataLoader(combined_hard_dataset, batch_size=batch_size, shuffle=True)
+
+print(f"Combined hard dataset size: {len(combined_hard_dataset)} samples")
+print(f"- Augment hard labels: {len(augment_dataset)} samples")
+print(f"- CIFAR-10H hard labels: {len(train_dataset)} samples")
 
 model = models.resnet34(weights=models.ResNet34_Weights.DEFAULT)
 num_ftrs = model.fc.in_features
@@ -422,6 +448,7 @@ all_metrics['hard_baseline'] = {
 }
 save_metrics(all_metrics['hard_baseline'], 'hard_baseline')
 
+
 print("\n=== Running Baseline 2 ===")
 print("Training with CIFAR-10 hard labels + CIFAR-10H soft labels")
 
@@ -430,6 +457,10 @@ hard_label_dataset = CIFAR10LabelDataset(augment_dataset)
 soft_label_dataset = CIFAR10LabelDataset(train_dataset, cifar10h_probs)
 combined_mixed_dataset = ConcatDataset([hard_label_dataset, soft_label_dataset])
 combined_mixed_loader = DataLoader(combined_mixed_dataset, batch_size=batch_size, shuffle=True)
+
+print(f"Combined mixed dataset size: {len(combined_mixed_dataset)} samples")
+print(f"- Augment hard labels: {len(hard_label_dataset)} samples")
+print(f"- CIFAR-10H soft labels: {len(soft_label_dataset)} samples")
 
 model = models.resnet34(weights=models.ResNet34_Weights.DEFAULT)
 num_ftrs = model.fc.in_features
@@ -451,18 +482,3 @@ all_metrics['mixed_baseline'] = {
     **model_metrics  # Test metrics
 }
 save_metrics(all_metrics['mixed_baseline'], 'mixed_baseline')
-
-# Plot comparative curves
-plot_comparative_curves(all_metrics)
-
-# Print comparative metrics
-print("\n=== Comparative Results ===")
-for model_name, metrics in all_metrics.items():
-    print(f"\n{model_name}:")
-    print(f"Test Accuracy: {metrics['test_accuracy']:.2f}%")
-    print(f"Macro AUPRC: {metrics['macro_auprc']:.4f}")
-    print("Per-class AUPRC:")
-    for class_name in CIFAR10_CLASSES:
-        print(f"  {class_name}: {metrics[f'class_{class_name}_auprc']:.4f}")
-
-
