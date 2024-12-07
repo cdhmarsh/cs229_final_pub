@@ -553,7 +553,7 @@ model3, metrics = train_model(
 )
 
 #Create Ensemble Model
-ensemble_model = EnsembleModel(models=[model1, model2])
+ensemble_model = EnsembleModel(models=[model1, model2, model3])
 ensemble_model = ensemble_model.to(device)
 
 model = ensemble_model
