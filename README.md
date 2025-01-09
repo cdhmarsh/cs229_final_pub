@@ -26,16 +26,10 @@ To set up the Python environment and download the datasets, set up conda and run
 * For literature review:
     * Mention paper that we had before (the one we're replicating) -> Human Uncertainty makes Classification Robust
 
-* Splitting stuff:
-    * Model baselines: Jack
-    * Find interesting patterns: Alex
-    * Writing: Connor
-        * Maybe get a sense of what people are doing and thinking of extensions/interesting methodologies
-
-* Githubs
-    * alex-gugu
-    * cdhmarsh
-
+* TODO:
+    * Model baselines
+    * Find interesting patterns
+    * Writing
 
 # Milestone 2 (after the milestone submission)
 * Identify some failure cases of the best baseline model
@@ -48,11 +42,11 @@ When I say taking "model architecture optimization, ensemble methods, or cross-d
 
 
 # Idea for Next Steps
-* JACK Train a model on CIFAR-10H to try predict human uncertainty
-* JACK Apply this model to a chunk of CIFAR-10 data to create a new dataset with predicted human uncertainty
-* JACK/ALEX Train a model on the new dataset with predicted human uncertainty and compare the performance to the original model trained on CIFAR-10
+* Train a model on CIFAR-10H to try predict human uncertainty
+* Apply this model to a chunk of CIFAR-10 data to create a new dataset with predicted human uncertainty
+* Train a model on the new dataset with predicted human uncertainty and compare the performance to the original model trained on CIFAR-10
     * Augment the hard labels into a distribution of soft labels
-* ALEX Try to apply this idea to other datasets (e.g. CIFAR-100, ImageNet)
+* Try to apply this idea to other datasets (e.g. CIFAR-100, ImageNet)
 
 Previously: image / hard label -> classification (CIFAR10)
 Baseline: (image -> soft label) -> (image / soft label -> classification) (CIFAR10H) better than previous
@@ -60,13 +54,13 @@ Now: ((image / hard label -> image / soft label) -> classification)
 
 * We basically try to see if we can predict human uncertainty, because having a dataset with a distribution of uncertainty can make it more robust.
 
-* CONNOR Explore model architecture optimization, with diff CNN architectures
+* Explore model architecture optimization, with diff CNN architectures
 
-* CONNOR ensemble learning with different architectures
+* Ensemble learning with different architectures
 
-* sus... ALL transfer learning and fine tuning on CIFAR-10 data
+* ALL transfer learning and fine tuning on CIFAR-10 data
 
-* ALEX qualitative analysis on when soft labels differ from ground truth
+* Qualitative analysis on when soft labels differ from ground truth
 
 Motivation: What problem are you tackling, and what's the setting you're considering?
 
